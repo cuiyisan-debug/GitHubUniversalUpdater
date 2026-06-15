@@ -1,0 +1,4 @@
+.work/
+*.log
+*.bak-before-icon
+*.icon-preview.png

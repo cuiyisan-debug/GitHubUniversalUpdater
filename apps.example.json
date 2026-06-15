@@ -1,0 +1,13 @@
+{
+  "Apps": [
+    {
+      "Name": "示例软件",
+      "InstallDir": "C:\\Program Files\\ExampleApp",
+      "GitHubUrl": "https://github.com/owner/repository",
+      "LastInstalledTag": "未安装",
+      "PreferredAssetRegex": "(?i)windows.*\\.zip$"
+    }
+  ],
+  "UseIdm": false,
+  "IdmPath": ""
+}
