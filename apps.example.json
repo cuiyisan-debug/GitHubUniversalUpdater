@@ -5,7 +5,18 @@
       "InstallDir": "C:\\Program Files\\ExampleApp",
       "GitHubUrl": "https://github.com/owner/repository",
       "LastInstalledTag": "未安装",
-      "PreferredAssetRegex": "(?i)windows.*\\.zip$"
+      "PreferredAssetRegex": "(?i)windows.*\\.zip$",
+      "UpdateMode": "解压覆盖",
+      "SilentInstallArgs": ""
+    },
+    {
+      "Name": "示例安装包软件",
+      "InstallDir": "C:\\Program Files\\InstallerApp",
+      "GitHubUrl": "https://github.com/owner/installer-repository",
+      "LastInstalledTag": "未安装",
+      "PreferredAssetRegex": "(?i)(setup|installer).*\\.(exe|msi)$",
+      "UpdateMode": "静默安装",
+      "SilentInstallArgs": "/S"
     }
   ],
   "UseIdm": false,
