@@ -21,8 +21,10 @@
 
 注意：
 - 检查更新使用 GitHub Releases。
+- 会读取当前 Windows 系统架构，对 release 资产打分，尽量避免 x64 机器误选 ARM64/macOS/Linux 包。
 - 覆盖 Program Files 目录通常需要管理员权限，程序已设置为管理员运行。
 - 下载加速使用 https://gh-proxy.org/。
-- 可选调用本地 Internet Download Manager 下载；程序会自动识别常见 IDM 安装路径，也可手动选择 IDMan.exe。
+- 支持多线程分段下载，服务器不支持时自动回退单线程。
+- 可选调用本地 Internet Download Manager 下载；IDM 下载未产出文件时自动回退内置多线程下载。
 - 更新结束后自动清理下载文件和临时目录。
 - rar/7z 解压依赖 Windows 自带 tar.exe 或 7-Zip。

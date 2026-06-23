@@ -7,8 +7,6 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Net;
-using System.Runtime.InteropServices;
-using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -49,6 +47,12 @@ namespace GitHubUniversalUpdater
         public List<ReleaseAsset> Assets = new List<ReleaseAsset>();
     }
 
+    internal class DownloadProbe
+    {
+        public long ContentLength;
+        public bool SupportsRanges;
+    }
+
     internal static class Program
     {
         [STAThread]
@@ -66,6 +70,7 @@ namespace GitHubUniversalUpdater
     {
         private const string ModeArchive = "解压覆盖";
         private const string ModeInstaller = "静默安装";
+        private const int SegmentCount = 8;
 
         private readonly string baseDir;
         private readonly string configPath;
@@ -97,7 +102,7 @@ namespace GitHubUniversalUpdater
 
         private void InitializeUi()
         {
-            Text = "GitHub 通用一键更新器 v1.1.0";
+            Text = "GitHub 通用一键更新器 v1.1.1";
             Width = 1180;
             Height = 720;
             StartPosition = FormStartPosition.CenterScreen;
@@ -420,8 +425,9 @@ namespace GitHubUniversalUpdater
                 var dict = new JavaScriptSerializer().DeserializeObject(json) as Dictionary<string, object>;
                 return ParseReleaseDict(dict, "GitHub API");
             }
-            catch
+            catch (Exception ex)
             {
+                Log("GitHub API 查询失败，改用网页解析：" + ex.Message);
                 return GetLatestReleaseFromWeb(parts.Item1, parts.Item2);
             }
         }
@@ -479,12 +485,13 @@ namespace GitHubUniversalUpdater
             if (!tagMatch.Success)
                 throw new InvalidOperationException("无法从 Releases 页面解析最新版本");
             var tag = WebUtility.HtmlDecode(tagMatch.Groups[1].Value);
-            var releaseHtml = HttpGet("https://github.com/" + owner + "/" + repo + "/releases/tag/" + Uri.EscapeDataString(tag), "text/html");
+            var releaseHtml = HttpGet("https://github.com/" + owner + "/" + repo + "/releases/expanded_assets/" + Uri.EscapeDataString(tag), "text/html");
             var release = new ReleaseInfo { Tag = tag, Source = "GitHub Web" };
             foreach (Match m in Regex.Matches(releaseHtml, @"href=""([^""]*/releases/download/[^""]+)""[^>]*>([^<]+)</a>", RegexOptions.IgnoreCase))
             {
                 var href = WebUtility.HtmlDecode(m.Groups[1].Value);
                 var name = WebUtility.HtmlDecode(m.Groups[2].Value).Trim();
+                if (Regex.IsMatch(name, @"(?i)^Source code|source|src")) continue;
                 if (href.StartsWith("/"))
                     href = "https://github.com" + href;
                 release.Assets.Add(new ReleaseAsset { Name = name, Url = href });
@@ -496,13 +503,25 @@ namespace GitHubUniversalUpdater
 
         private ReleaseAsset SelectAsset(ReleaseInfo release, string preferredRegex, bool installerMode)
         {
-            IEnumerable<ReleaseAsset> assets = release.Assets;
+            IEnumerable<ReleaseAsset> assets = release.Assets
+                .Where(a => !Regex.IsMatch(a.Name ?? "", @"(?i)^Source code|source[._ -]?code|src"))
+                .ToList();
             if (!string.IsNullOrWhiteSpace(preferredRegex))
             {
-                var regex = new Regex(preferredRegex, RegexOptions.IgnoreCase);
-                var preferred = assets.Where(a => regex.IsMatch(a.Name)).ToList();
-                if (preferred.Count > 0)
-                    assets = preferred;
+                try
+                {
+                    var regex = new Regex(preferredRegex, RegexOptions.IgnoreCase);
+                    var preferred = assets.Where(a => regex.IsMatch(a.Name)).ToList();
+                    if (preferred.Count > 0)
+                    {
+                        Log("按资产筛选选择：" + preferred[0].Name);
+                        assets = preferred;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log("资产筛选正则无效，改用自动选择：" + ex.Message);
+                }
             }
             var allowed = installerMode
                 ? new[] { ".exe", ".msi", ".msix", ".msixbundle" }
@@ -510,25 +529,64 @@ namespace GitHubUniversalUpdater
             var filtered = assets.Where(a => allowed.Contains(Path.GetExtension(a.Name).ToLowerInvariant())).ToList();
             if (filtered.Count == 0)
                 filtered = assets.ToList();
-            return filtered.Select(a => new { Asset = a, Score = ScoreAsset(a.Name, installerMode) })
+            if (filtered.Count == 0)
+                throw new InvalidOperationException("Release 没有找到可用下载资产");
+            var best = filtered.Select(a => new { Asset = a, Score = ScoreAsset(a.Name, installerMode) })
                 .OrderByDescending(x => x.Score)
-                .ThenByDescending(x => x.Asset.Size)
-                .First().Asset;
+                .ThenBy(x => x.Asset.Name.Length)
+                .First();
+            Log("系统识别：windows " + GetCurrentArch() + "；自动选择资产：" + best.Asset.Name + "；评分 " + best.Score);
+            return best.Asset;
         }
 
         private int ScoreAsset(string fileName, bool installerMode)
         {
             var n = fileName.ToLowerInvariant();
             var score = 0;
-            if (ContainsAny(n, "win", "windows")) score += 40;
-            if (ContainsAny(n, "x64", "amd64", "x86_64")) score += Environment.Is64BitOperatingSystem ? 30 : -20;
-            if (ContainsAny(n, "arm64", "aarch64", "mac", "darwin", "linux")) score -= 60;
+            var arch = GetCurrentArch();
+            if (Regex.IsMatch(n, installerMode ? @"\.(exe|msi|msix|msixbundle)$" : @"\.(zip|7z|rar)$")) score += 20;
+            if (ContainsAny(n, "source", "src")) score -= 200;
+            if (ContainsAny(n, "windows", "win32", "win64", "win-", "win_", ".win")) score += 120;
+            if (ContainsAny(n, "mac", "macos", "darwin", "osx", "linux", "ubuntu", "debian", "appimage", "rpm", "dmg")) score -= 500;
+            if (arch == "x64")
+            {
+                if (ContainsAny(n, "x64", "x86_64", "amd64", "win64")) score += 100;
+                if (ContainsAny(n, "arm64", "aarch64", "armv8")) score -= 450;
+                if (Regex.IsMatch(n, @"(^|[^a-z0-9])x86([^a-z0-9]|$)") || ContainsAny(n, "ia32", "win32")) score += 25;
+            }
+            else if (arch == "arm64")
+            {
+                if (ContainsAny(n, "arm64", "aarch64")) score += 120;
+                if (ContainsAny(n, "x64", "x86_64", "amd64")) score -= 120;
+            }
+            else
+            {
+                if (Regex.IsMatch(n, @"(^|[^a-z0-9])x86([^a-z0-9]|$)") || ContainsAny(n, "ia32", "win32")) score += 100;
+                if (ContainsAny(n, "x64", "x86_64", "amd64", "arm64", "aarch64")) score -= 250;
+            }
             if (installerMode && ContainsAny(n, "setup", "installer", "install")) score += 20;
             if (!installerMode && ContainsAny(n, "portable")) score += 10;
+            if (!ContainsAny(n, "windows", "win", "mac", "linux", "arm", "x64", "x86", "amd64", "aarch64")) score += 5;
             if (n.EndsWith(".msi")) score += 16;
             if (n.EndsWith(".exe")) score += 12;
             if (n.EndsWith(".zip")) score += 10;
             return score;
+        }
+
+        private string GetCurrentArch()
+        {
+            var arch = "";
+            try
+            {
+                arch = Environment.GetEnvironmentVariable("PROCESSOR_ARCHITEW6432");
+                if (string.IsNullOrWhiteSpace(arch))
+                    arch = Environment.GetEnvironmentVariable("PROCESSOR_ARCHITECTURE");
+            }
+            catch { }
+            arch = (arch ?? "").ToLowerInvariant();
+            if (arch.Contains("arm64") || arch.Contains("aarch64")) return "arm64";
+            if (Environment.Is64BitOperatingSystem) return "x64";
+            return "x86";
         }
 
         private bool ContainsAny(string text, params string[] parts)
@@ -575,12 +633,17 @@ namespace GitHubUniversalUpdater
             var url = GetProxyUrl(asset.Url);
             if (ShouldUseIdm())
             {
-                DownloadWithIdm(GetIdmPathFromUi(), url, dir, fileName, target, app.Name, rowIndex);
+                try
+                {
+                    DownloadWithIdm(GetIdmPathFromUi(), url, dir, fileName, target, app.Name, rowIndex);
+                    return target;
+                }
+                catch (Exception ex)
+                {
+                    Log("IDM 下载失败，回退内置多线程下载：" + ex.Message);
+                }
             }
-            else
-            {
-                DownloadWithWebClient(url, target, app.Name, rowIndex);
-            }
+            DownloadWithSegments(url, target, app.Name, rowIndex);
             return target;
         }
 
@@ -611,13 +674,114 @@ namespace GitHubUniversalUpdater
             if (File.Exists(targetPath)) File.Delete(targetPath);
             RunProcess(idmPath, "/d \"" + url + "\" /p \"" + dir + "\" /f \"" + fileName + "\" /n /q");
             var start = DateTime.Now;
-            while (!File.Exists(targetPath) && DateTime.Now - start < TimeSpan.FromMinutes(30))
+            while (!File.Exists(targetPath) && DateTime.Now - start < TimeSpan.FromSeconds(60))
             {
                 Thread.Sleep(1000);
                 SetStatus(rowIndex, "", "", "等待 IDM 下载...");
             }
             if (!File.Exists(targetPath))
                 throw new IOException("IDM 下载超时");
+        }
+
+        private void DownloadWithSegments(string url, string path, string displayName, int rowIndex)
+        {
+            var probe = ProbeDownload(url);
+            if (probe.ContentLength <= 0 || !probe.SupportsRanges)
+            {
+                Log("服务器不支持分段下载，使用单线程下载");
+                DownloadWithWebClient(url, path, displayName, rowIndex);
+                return;
+            }
+
+            if (File.Exists(path)) File.Delete(path);
+            var partPaths = new List<string>();
+            var errors = new List<Exception>();
+            var received = new long[SegmentCount];
+            var threads = new List<Thread>();
+            var partSize = probe.ContentLength / SegmentCount;
+            var startTime = DateTime.Now;
+
+            for (int i = 0; i < SegmentCount; i++)
+            {
+                var index = i;
+                var startByte = i * partSize;
+                var endByte = (i == SegmentCount - 1) ? probe.ContentLength - 1 : startByte + partSize - 1;
+                var partPath = path + ".part" + i;
+                partPaths.Add(partPath);
+                if (File.Exists(partPath)) File.Delete(partPath);
+                var thread = new Thread(delegate()
+                {
+                    try
+                    {
+                        DownloadRange(url, partPath, startByte, endByte, delegate(long delta)
+                        {
+                            Interlocked.Add(ref received[index], delta);
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        lock (errors) errors.Add(ex);
+                    }
+                });
+                thread.IsBackground = true;
+                threads.Add(thread);
+                thread.Start();
+            }
+
+            while (threads.Any(t => t.IsAlive))
+            {
+                var total = received.Sum();
+                var seconds = Math.Max(1, (DateTime.Now - startTime).TotalSeconds);
+                SetStatus(rowIndex, "", "", "下载中 " + (total * 100 / probe.ContentLength) + "% " + FormatBytes((long)(total / seconds)) + "/s");
+                Thread.Sleep(500);
+            }
+            foreach (var thread in threads) thread.Join();
+            if (errors.Count > 0)
+                throw errors[0];
+
+            using (var output = File.Create(path))
+            {
+                foreach (var part in partPaths)
+                {
+                    using (var input = File.OpenRead(part))
+                        input.CopyTo(output);
+                    File.Delete(part);
+                }
+            }
+        }
+
+        private DownloadProbe ProbeDownload(string url)
+        {
+            var request = (HttpWebRequest)WebRequest.Create(url);
+            request.Method = "HEAD";
+            request.UserAgent = "GitHubUniversalUpdater/1.1";
+            using (var response = (HttpWebResponse)request.GetResponse())
+            {
+                return new DownloadProbe
+                {
+                    ContentLength = response.ContentLength,
+                    SupportsRanges = string.Equals(response.Headers["Accept-Ranges"], "bytes", StringComparison.OrdinalIgnoreCase)
+                };
+            }
+        }
+
+        private void DownloadRange(string url, string path, long startByte, long endByte, Action<long> onBytes)
+        {
+            var request = (HttpWebRequest)WebRequest.Create(url);
+            request.UserAgent = "GitHubUniversalUpdater/1.1";
+            request.AddRange(startByte, endByte);
+            using (var response = (HttpWebResponse)request.GetResponse())
+            using (var input = response.GetResponseStream())
+            using (var output = File.Create(path))
+            {
+                var buffer = new byte[1024 * 128];
+                int read;
+                while ((read = input.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    output.Write(buffer, 0, read);
+                    onBytes(read);
+                }
+            }
         }
 
         private void DownloadWithWebClient(string url, string path, string displayName, int rowIndex)
@@ -674,6 +838,19 @@ namespace GitHubUniversalUpdater
             if (ext == ".msi") return "/qn /norestart";
             if (ext == ".msix" || ext == ".msixbundle") return "";
             return "/S";
+        }
+
+        private string FormatBytes(long bytes)
+        {
+            string[] units = { "B", "KB", "MB", "GB" };
+            double value = bytes;
+            int unit = 0;
+            while (value >= 1024 && unit < units.Length - 1)
+            {
+                value /= 1024;
+                unit++;
+            }
+            return value.ToString("0.##") + units[unit];
         }
 
         private void CleanupUpdateFiles(string assetPath, string extractPath)

@@ -1,4 +1,7 @@
 .work/
+.recovery/
+apps.json
 *.log
 *.bak-before-icon
+*.bak-v*
 *.icon-preview.png
