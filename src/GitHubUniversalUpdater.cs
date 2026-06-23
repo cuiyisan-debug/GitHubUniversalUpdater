@@ -70,6 +70,7 @@ namespace GitHubUniversalUpdater
 
     public class MainForm : Form
     {
+        private const string ModeAuto = "自动识别";
         private const string ModeArchive = "解压覆盖";
         private const string ModeInstaller = "静默安装";
         private const int SegmentCount = 8;
@@ -109,14 +110,23 @@ namespace GitHubUniversalUpdater
 
         private void InitializeUi()
         {
-            Text = "GitHub 通用一键更新器 v1.1.5";
+            Text = "GitHub 通用一键更新器 v1.1";
             Width = 1545;
             Height = 720;
             StartPosition = FormStartPosition.CenterScreen;
             MinimumSize = new Size(1180, 580);
 
+            var layout = new TableLayoutPanel();
+            layout.Dock = DockStyle.Fill;
+            layout.ColumnCount = 1;
+            layout.RowCount = 3;
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 170));
+            Controls.Add(layout);
+
             var top = new FlowLayoutPanel();
-            top.Dock = DockStyle.Top;
+            top.Dock = DockStyle.Fill;
             top.Height = 42;
             top.Padding = new Padding(8, 8, 8, 4);
 
@@ -131,7 +141,7 @@ namespace GitHubUniversalUpdater
             browseIdmButton = MakeButton("选择IDM");
 
             top.Controls.AddRange(new Control[] { addButton, removeButton, saveButton, checkButton, updateButton, proxyLabel, useIdmCheckBox, idmPathBox, browseIdmButton });
-            Controls.Add(top);
+            layout.Controls.Add(top, 0, 0);
 
             grid = new DataGridView();
             grid.Dock = DockStyle.Fill;
@@ -149,17 +159,23 @@ namespace GitHubUniversalUpdater
             grid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
             grid.ColumnHeadersHeight = 26;
 
-            AddTextColumn("Name", "软件名称", 210);
-            AddTextColumn("InstallDir", "安装目录或主程序exe", 420);
-            grid.Columns.Add(new DataGridViewButtonColumn { Name = "BrowseInstall", HeaderText = "", Text = "选择", UseColumnTextForButtonValue = true, Width = 72, Resizable = DataGridViewTriState.True });
-            AddTextColumn("GitHubUrl", "GitHub 地址", 410);
-            AddTextColumn("LastInstalledTag", "本地版本", 120);
-            AddTextColumn("LatestTag", "最新版本", 120);
-            AddTextColumn("Status", "状态", 170);
-            AddTextColumn("PreferredAssetRegex", "资产筛选(可选)", 300);
-            AddHiddenTextColumn("UpdateMode", "更新方式");
-            AddHiddenTextColumn("SilentInstallArgs", "静默参数");
-            Controls.Add(grid);
+            AddTextColumn("Name", "软件名称", 150);
+            AddTextColumn("InstallDir", "安装目录或主程序exe", 285);
+            grid.Columns.Add(new DataGridViewButtonColumn { Name = "BrowseInstall", HeaderText = "选择", Text = "选择", UseColumnTextForButtonValue = true, Width = 60, Resizable = DataGridViewTriState.True });
+            AddTextColumn("GitHubUrl", "GitHub 地址", 300);
+            AddTextColumn("LastInstalledTag", "本地版本", 90);
+            AddTextColumn("LatestTag", "最新版本", 90);
+            AddTextColumn("Status", "状态", 110);
+            AddTextColumn("PreferredAssetRegex", "资产筛选(可选)", 190);
+            var modeColumn = new DataGridViewComboBoxColumn();
+            modeColumn.Name = "UpdateMode";
+            modeColumn.HeaderText = "更新方式";
+            modeColumn.Width = 85;
+            modeColumn.Resizable = DataGridViewTriState.True;
+            modeColumn.Items.AddRange(ModeAuto, ModeArchive, ModeInstaller);
+            grid.Columns.Add(modeColumn);
+            AddTextColumn("SilentInstallArgs", "静默参数", 105);
+            layout.Controls.Add(grid, 0, 1);
 
             logBox = new TextBox();
             logBox.Dock = DockStyle.Bottom;
@@ -167,7 +183,7 @@ namespace GitHubUniversalUpdater
             logBox.Multiline = true;
             logBox.ScrollBars = ScrollBars.Vertical;
             logBox.ReadOnly = true;
-            Controls.Add(logBox);
+            layout.Controls.Add(logBox, 0, 2);
 
             addButton.Click += delegate { AddBlankRow(); };
             removeButton.Click += delegate { RemoveSelectedRows(); };
@@ -303,7 +319,7 @@ namespace GitHubUniversalUpdater
 
         private void AddBlankRow()
         {
-            AddRow(new AppEntry { LastInstalledTag = "未安装", UpdateMode = ModeArchive });
+            AddRow(new AppEntry { LastInstalledTag = "未安装", UpdateMode = ModeAuto });
         }
 
         private void AddRow(AppEntry app)
@@ -437,10 +453,11 @@ namespace GitHubUniversalUpdater
                 Log("检查 " + app.Name + "：" + app.GitHubUrl);
                 var release = GetLatestRelease(app.GitHubUrl);
                 checkedReleases[rowIndex] = release;
-                var local = DetectLocalVersion(app);
+                var local = DetectLocalVersion(app, release);
                 var status = IsNewer(local, release.Tag) ? "发现更新" : "已是最新";
-                var asset = SelectAsset(release, app.PreferredAssetRegex, IsInstallerMode(app));
-                if (IsInstallerMode(app) || IsInstallerAsset(asset.Name))
+                var mode = NormalizeMode(app.UpdateMode);
+                var asset = SelectAsset(release, app.PreferredAssetRegex, mode);
+                if (ShouldInstallAsInstaller(mode, asset))
                     status += "（安装包）";
                 SetStatus(rowIndex, local, release.Tag, status);
             }
@@ -462,15 +479,16 @@ namespace GitHubUniversalUpdater
                 if (!checkedReleases.TryGetValue(rowIndex, out release))
                     release = GetLatestRelease(app.GitHubUrl);
 
-                var local = DetectLocalVersion(app);
+                var local = DetectLocalVersion(app, release);
                 if (!IsNewer(local, release.Tag))
                 {
                     SetStatus(rowIndex, local, release.Tag, "跳过：已是最新");
                     return;
                 }
 
-                var asset = SelectAsset(release, app.PreferredAssetRegex, IsInstallerMode(app));
-                var installAsInstaller = IsInstallerMode(app) || IsInstallerAsset(asset.Name);
+                var mode = NormalizeMode(app.UpdateMode);
+                var asset = SelectAsset(release, app.PreferredAssetRegex, mode);
+                var installAsInstaller = ShouldInstallAsInstaller(mode, asset);
                 Log(app.Name + " 选择资产：" + asset.Name);
                 var assetPath = DownloadAsset(app, release, asset, rowIndex);
 
@@ -556,8 +574,10 @@ namespace GitHubUniversalUpdater
         private string HttpGet(string url, string accept)
         {
             var request = (HttpWebRequest)WebRequest.Create(url);
-            request.UserAgent = "GitHubUniversalUpdater/1.1";
+            request.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) GitHubUniversalUpdater/1.1";
             request.Accept = accept;
+            request.Headers[HttpRequestHeader.AcceptLanguage] = "zh-CN,zh;q=0.9,en;q=0.8";
+            request.AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate;
             request.Timeout = 30000;
             using (var response = (HttpWebResponse)request.GetResponse())
             using (var stream = response.GetResponseStream())
@@ -574,13 +594,15 @@ namespace GitHubUniversalUpdater
             var tag = WebUtility.HtmlDecode(tagMatch.Groups[1].Value);
             var releaseHtml = HttpGet("https://github.com/" + owner + "/" + repo + "/releases/expanded_assets/" + Uri.EscapeDataString(tag), "text/html");
             var release = new ReleaseInfo { Tag = tag, Source = "GitHub Web" };
-            foreach (Match m in Regex.Matches(releaseHtml, @"href=""([^""]*/releases/download/[^""]+)""[^>]*>([^<]+)</a>", RegexOptions.IgnoreCase))
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (Match m in Regex.Matches(releaseHtml, @"href=""([^""]*/releases/download/[^""]+)""", RegexOptions.IgnoreCase))
             {
                 var href = WebUtility.HtmlDecode(m.Groups[1].Value);
-                var name = WebUtility.HtmlDecode(m.Groups[2].Value).Trim();
+                var name = WebUtility.UrlDecode(href.Substring(href.LastIndexOf('/') + 1)).Trim();
                 if (Regex.IsMatch(name, @"(?i)^Source code|source|src")) continue;
                 if (href.StartsWith("/"))
                     href = "https://github.com" + href;
+                if (!seen.Add(href)) continue;
                 release.Assets.Add(new ReleaseAsset { Name = name, Url = href });
             }
             if (release.Assets.Count == 0)
@@ -588,8 +610,10 @@ namespace GitHubUniversalUpdater
             return release;
         }
 
-        private ReleaseAsset SelectAsset(ReleaseInfo release, string preferredRegex, bool installerMode)
+        private ReleaseAsset SelectAsset(ReleaseInfo release, string preferredRegex, string updateMode)
         {
+            var installerMode = updateMode == ModeInstaller;
+            var archiveMode = updateMode == ModeArchive;
             IEnumerable<ReleaseAsset> assets = release.Assets
                 .Where(a => !Regex.IsMatch(a.Name ?? "", @"(?i)^Source code|source[._ -]?code|src"))
                 .ToList();
@@ -610,12 +634,17 @@ namespace GitHubUniversalUpdater
                     Log("资产筛选正则无效，改用自动选择：" + ex.Message);
                 }
             }
-            var allowed = installerMode
-                ? new[] { ".exe", ".msi", ".msix", ".msixbundle" }
-                : new[] { ".zip", ".7z", ".rar", ".exe", ".msi", ".msix", ".msixbundle" };
+            string[] allowed;
+            if (installerMode)
+                allowed = new[] { ".exe", ".msi", ".msix", ".msixbundle" };
+            else if (archiveMode)
+                allowed = new[] { ".zip", ".7z", ".rar" };
+            else
+                allowed = new[] { ".zip", ".7z", ".rar", ".exe", ".msi", ".msix", ".msixbundle" };
             var filtered = assets.Where(a => allowed.Contains(Path.GetExtension(a.Name).ToLowerInvariant())).ToList();
             if (filtered.Count == 0)
                 filtered = assets.ToList();
+            filtered = FilterCompatibleArchitecture(filtered);
             if (filtered.Count == 0)
                 throw new InvalidOperationException("Release 没有找到可用下载资产");
             var best = filtered.Select(a => new { Asset = a, Score = ScoreAsset(a.Name, installerMode || IsInstallerAsset(a.Name)) })
@@ -631,30 +660,42 @@ namespace GitHubUniversalUpdater
             return Regex.IsMatch(fileName ?? "", @"(?i)\.(exe|msi|msix|msixbundle)$");
         }
 
+        private bool ShouldInstallAsInstaller(string updateMode, ReleaseAsset asset)
+        {
+            if (updateMode == ModeInstaller) return true;
+            if (updateMode == ModeArchive) return false;
+            return asset != null && IsInstallerAsset(asset.Name);
+        }
+
         private int ScoreAsset(string fileName, bool installerMode)
         {
             var n = fileName.ToLowerInvariant();
             var score = 0;
             var arch = GetCurrentArch();
+            var hasArm64 = IsArm64Asset(n);
+            var hasX64 = IsX64Asset(n);
+            var hasX86 = IsX86Asset(n);
             if (Regex.IsMatch(n, installerMode ? @"\.(exe|msi|msix|msixbundle)$" : @"\.(zip|7z|rar)$")) score += 20;
             if (ContainsAny(n, "source", "src")) score -= 200;
             if (ContainsAny(n, "windows", "win32", "win64", "win-", "win_", ".win")) score += 120;
             if (ContainsAny(n, "mac", "macos", "darwin", "osx", "linux", "ubuntu", "debian", "appimage", "rpm", "dmg")) score -= 500;
             if (arch == "x64")
             {
-                if (ContainsAny(n, "x64", "x86_64", "amd64", "win64")) score += 100;
-                if (ContainsAny(n, "arm64", "aarch64", "armv8")) score -= 450;
-                if (Regex.IsMatch(n, @"(^|[^a-z0-9])x86([^a-z0-9]|$)") || ContainsAny(n, "ia32", "win32")) score += 25;
+                if (hasX64) score += 140;
+                if (ContainsAny(n, "win64") && !hasArm64) score += 60;
+                if (hasArm64) score -= 1000;
+                if (hasX86) score += 20;
             }
             else if (arch == "arm64")
             {
-                if (ContainsAny(n, "arm64", "aarch64")) score += 120;
-                if (ContainsAny(n, "x64", "x86_64", "amd64")) score -= 120;
+                if (hasArm64) score += 160;
+                if (hasX64) score -= 80;
+                if (hasX86) score -= 220;
             }
             else
             {
-                if (Regex.IsMatch(n, @"(^|[^a-z0-9])x86([^a-z0-9]|$)") || ContainsAny(n, "ia32", "win32")) score += 100;
-                if (ContainsAny(n, "x64", "x86_64", "amd64", "arm64", "aarch64")) score -= 250;
+                if (hasX86) score += 130;
+                if (hasX64 || hasArm64 || ContainsAny(n, "win64")) score -= 800;
             }
             if (installerMode && ContainsAny(n, "setup", "installer", "install")) score += 20;
             if (!installerMode && ContainsAny(n, "portable")) score += 10;
@@ -663,6 +704,42 @@ namespace GitHubUniversalUpdater
             if (n.EndsWith(".exe")) score += 12;
             if (n.EndsWith(".zip")) score += 10;
             return score;
+        }
+
+        private List<ReleaseAsset> FilterCompatibleArchitecture(List<ReleaseAsset> assets)
+        {
+            var compatible = assets.Where(a => IsCompatibleArchitecture(a.Name)).ToList();
+            return compatible.Count > 0 ? compatible : assets;
+        }
+
+        private bool IsCompatibleArchitecture(string fileName)
+        {
+            var n = (fileName ?? "").ToLowerInvariant();
+            var arch = GetCurrentArch();
+            var hasArm64 = IsArm64Asset(n);
+            var hasX64 = IsX64Asset(n);
+            var hasX86 = IsX86Asset(n);
+
+            if (arch == "x64")
+                return !hasArm64;
+            if (arch == "arm64")
+                return !hasX86;
+            return !hasArm64 && !hasX64 && !ContainsAny(n, "win64");
+        }
+
+        private bool IsArm64Asset(string fileName)
+        {
+            return ContainsAny(fileName, "arm64", "aarch64", "armv8");
+        }
+
+        private bool IsX64Asset(string fileName)
+        {
+            return ContainsAny(fileName, "x64", "x86_64", "amd64");
+        }
+
+        private bool IsX86Asset(string fileName)
+        {
+            return Regex.IsMatch(fileName ?? "", @"(^|[^a-z0-9])x86([^a-z0-9]|$)") || ContainsAny(fileName, "ia32", "win32", "x32");
         }
 
         private string GetCurrentArch()
@@ -688,15 +765,164 @@ namespace GitHubUniversalUpdater
 
         private string DetectLocalVersion(AppEntry app)
         {
-            if (IsInstallerMode(app))
-                return IsUsableSavedVersion(app.LastInstalledTag) ? app.LastInstalledTag : "未安装";
+            return DetectLocalVersion(app, null);
+        }
+
+        private string DetectLocalVersion(AppEntry app, ReleaseInfo release)
+        {
             var root = GetInstallRoot(app.InstallDir);
+            var exeVersion = DetectExecutableVersion(app, root, release);
+            if (IsUsableSavedVersion(exeVersion))
+                return exeVersion;
             var marker = Path.Combine(root, ".github-universal-updater-version");
             if (File.Exists(marker))
                 return File.ReadAllText(marker, Encoding.UTF8).Trim();
             if (IsUsableSavedVersion(app.LastInstalledTag))
                 return app.LastInstalledTag;
             return "未安装";
+        }
+
+        private string DetectExecutableVersion(AppEntry app, string root, ReleaseInfo release)
+        {
+            var exePath = FindMainExecutable(app, root, release);
+            if (string.IsNullOrWhiteSpace(exePath)) return "";
+            try
+            {
+                var info = FileVersionInfo.GetVersionInfo(exePath);
+                var version = FirstNonEmpty(info.FileVersion, info.ProductVersion);
+                if (!string.IsNullOrWhiteSpace(version))
+                    return NormalizeFileVersion(version);
+            }
+            catch { }
+            return "";
+        }
+
+        private string FindMainExecutable(AppEntry app, string root, ReleaseInfo release)
+        {
+            if (!string.IsNullOrWhiteSpace(app.InstallDir) &&
+                Path.GetExtension(app.InstallDir).Equals(".exe", StringComparison.OrdinalIgnoreCase) &&
+                File.Exists(app.InstallDir))
+                return app.InstallDir;
+            var hints = BuildVersionHints(app, root, release);
+            if (string.IsNullOrWhiteSpace(root))
+                return "";
+
+            if (Directory.Exists(root))
+            {
+                var localExe = SelectBestExecutable(Directory.GetFiles(root, "*.exe", SearchOption.TopDirectoryOnly), hints, 0);
+                if (!string.IsNullOrWhiteSpace(localExe))
+                    return localExe;
+            }
+
+            var siblingExe = FindSiblingExecutable(root, hints);
+            if (!string.IsNullOrWhiteSpace(siblingExe))
+                return siblingExe;
+            return "";
+        }
+
+        private string SelectBestExecutable(IEnumerable<string> candidates, IEnumerable<string> hints, int minScore)
+        {
+            var exeFiles = candidates
+                .Where(p => !Regex.IsMatch(Path.GetFileName(p), @"(?i)unins|uninstall|setup|install|update|crash|helper"))
+                .ToList();
+            if (exeFiles.Count == 0) return "";
+            if (exeFiles.Count == 1 && minScore <= 0) return exeFiles[0];
+
+            var best = exeFiles
+                .Select(p => new { Path = p, Score = ScoreExecutableName(p, hints) })
+                .OrderByDescending(x => x.Score)
+                .ThenByDescending(x => new FileInfo(x.Path).Length)
+                .First();
+            return best.Score >= minScore ? best.Path : "";
+        }
+
+        private string FindSiblingExecutable(string root, IEnumerable<string> hints)
+        {
+            var parent = Directory.Exists(root)
+                ? Directory.GetParent(root)
+                : Directory.GetParent(root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            if (parent == null || !Directory.Exists(parent.FullName)) return "";
+
+            var candidates = new List<string>();
+            foreach (var dir in Directory.GetDirectories(parent.FullName).Take(200))
+            {
+                var dirName = Path.GetFileName(dir);
+                var dirScore = ScoreText(dirName, hints);
+                if (dirScore < 20) continue;
+                try
+                {
+                    candidates.AddRange(Directory.GetFiles(dir, "*.exe", SearchOption.TopDirectoryOnly));
+                }
+                catch { }
+            }
+            return SelectBestExecutable(candidates, hints, 30);
+        }
+
+        private List<string> BuildVersionHints(AppEntry app, string root, ReleaseInfo release)
+        {
+            var hints = new List<string>();
+            hints.Add(Path.GetFileName(root));
+            hints.Add(app.Name);
+            var repo = ParseRepoName(app.GitHubUrl);
+            if (!string.IsNullOrWhiteSpace(repo)) hints.Add(repo);
+            if (release != null && release.Assets != null)
+            {
+                foreach (var asset in release.Assets)
+                    hints.Add(Path.GetFileNameWithoutExtension(asset.Name));
+            }
+            return hints;
+        }
+
+        private int ScoreExecutableName(string exePath, IEnumerable<string> hints)
+        {
+            return ScoreText(Path.GetFileNameWithoutExtension(exePath), hints);
+        }
+
+        private int ScoreText(string text, IEnumerable<string> hints)
+        {
+            var name = (text ?? "").ToLowerInvariant();
+            var score = 0;
+            foreach (var hint in hints)
+            {
+                foreach (var token in SplitNameTokens(hint))
+                {
+                    if (token.Length < 2) continue;
+                    if (name.Contains(token)) score += token.Length * 10;
+                }
+            }
+            return score;
+        }
+
+        private IEnumerable<string> SplitNameTokens(string value)
+        {
+            return Regex.Split((value ?? "").ToLowerInvariant(), @"[^a-z0-9\u4e00-\u9fff]+")
+                .Where(t => !string.IsNullOrWhiteSpace(t));
+        }
+
+        private string ParseRepoName(string repoUrl)
+        {
+            var match = Regex.Match(repoUrl ?? "", @"github\.com[/:][^/\s]+/([^/\s#?]+)", RegexOptions.IgnoreCase);
+            return match.Success ? Regex.Replace(match.Groups[1].Value, @"\.git$", "", RegexOptions.IgnoreCase) : "";
+        }
+
+        private string FirstNonEmpty(params string[] values)
+        {
+            foreach (var value in values)
+            {
+                if (!string.IsNullOrWhiteSpace(value)) return value.Trim();
+            }
+            return "";
+        }
+
+        private string NormalizeFileVersion(string version)
+        {
+            version = Regex.Replace(version ?? "", @"\s+", "").Trim();
+            var match = Regex.Match(version, @"\d+(?:\.\d+){1,3}");
+            if (!match.Success) return version;
+            var parts = match.Value.Split('.').ToList();
+            while (parts.Count > 2 && parts[parts.Count - 1] == "0")
+                parts.RemoveAt(parts.Count - 1);
+            return string.Join(".", parts.ToArray());
         }
 
         private bool IsUsableSavedVersion(string savedTag)
@@ -1053,7 +1279,10 @@ namespace GitHubUniversalUpdater
             if (string.Equals(value, "installer", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(value, ModeInstaller, StringComparison.OrdinalIgnoreCase))
                 return ModeInstaller;
-            return ModeArchive;
+            if (string.Equals(value, "archive", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(value, ModeArchive, StringComparison.OrdinalIgnoreCase))
+                return ModeArchive;
+            return ModeAuto;
         }
 
         private bool IsInstallerMode(AppEntry app)

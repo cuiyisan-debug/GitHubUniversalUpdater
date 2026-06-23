@@ -11,6 +11,7 @@
 - 自动选择 `zip`、`7z`、`rar` 压缩包资产，优先选择 Windows 相关文件。
 - 自动识别 `.exe`、`.msi`、`.msix`、`.msixbundle` 安装包资产，识别后后台静默安装。
 - 自动读取当前系统架构并按资产名打分，降低 Windows x64 机器误选 ARM64/macOS/Linux 包的概率。
+- 资产筛选留空时自动匹配系统和架构；手动填写时使用正则表达式优先筛选 Release 资产文件名。
 - 支持“解压覆盖”模式：下载压缩包、解压后覆盖安装目录。
 - 静默安装不读取本地软件版本，只按 GitHub Release tag 和 `LastInstalledTag` 判断是否已经安装过。
 - 安装包静默参数为空时，`.msi` 默认使用 `/qn /norestart`，`.exe` 默认使用 `/S`。
@@ -28,3 +29,20 @@
 - 不同安装包的静默参数不完全相同，如需指定参数，可在 `apps.json` 中配置 `SilentInstallArgs`。
 - `rar` 和 `7z` 解压依赖系统 `tar.exe` 或 7-Zip。
 - 本工具不备份安装目录，避免占用大量磁盘空间。
+
+## 资产筛选规则
+
+`资产筛选(可选)` 可以留空。留空时程序会自动识别 Windows、压缩包/安装包、本机架构，并避开 macOS、Linux、ARM64 等不适合当前机器的资产。
+
+Windows 64 位还要区分 x64 和 ARM64：`win64` 只表示 64 位 Windows，不等于一定适合 x64 电脑。x64 电脑会优先选择 `x64`、`x86_64`、`amd64`，并排除 `arm64`、`aarch64`、`armv8`。
+
+常用示例：
+
+```text
+(?i)(windows|win).*(x64|x86_64|amd64).*\.zip$
+(?i)(setup|installer).*\.exe$
+(?i)\.(exe|msi)$
+(?i)\.rar$
+```
+
+`(?i)` 表示不区分大小写。只有自动选择不符合预期时，才需要手动填写筛选规则。

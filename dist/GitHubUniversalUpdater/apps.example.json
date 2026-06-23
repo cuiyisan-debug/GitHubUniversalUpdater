@@ -5,8 +5,8 @@
       "InstallDir": "C:\\Program Files\\ExampleApp",
       "GitHubUrl": "https://github.com/owner/repository",
       "LastInstalledTag": "未安装",
-      "PreferredAssetRegex": "(?i)windows.*\\.zip$",
-      "UpdateMode": "解压覆盖",
+      "PreferredAssetRegex": "",
+      "UpdateMode": "自动识别",
       "SilentInstallArgs": ""
     },
     {

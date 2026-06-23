@@ -3,7 +3,7 @@
 2. 首次运行会自动生成 apps.json 配置文件。
 3. 在软件里填写或修改：软件名称、安装目录或主程序 exe 路径、GitHub 地址。
 4. 可以点击每行“选择”按钮，手动选择安装目录或主程序 exe。
-5. GitHub Release 提供压缩包时自动解压覆盖；提供安装包时自动识别并后台静默安装。
+5. “更新方式”可选：自动识别、解压覆盖、静默安装。
 6. 点击“检查更新”，确认有更新后点击“一键更新”。
 
 带到其它电脑：
@@ -14,7 +14,10 @@
 
 安装包静默安装：
 - 适合 GitHub Release 里发布 setup.exe、installer.exe、.msi 这类安装包的软件。
-- 识别到安装包后，不读取本地软件版本，只根据 GitHub 最新 Release tag 和 LastInstalledTag 判断是否安装过。
+- 更新方式选“自动识别”时，会根据资产扩展名自动判断压缩包或安装包。
+- 更新方式选“解压覆盖”时，只选择 zip、7z、rar。
+- 更新方式选“静默安装”时，只选择 exe、msi、msix、msixbundle。
+- 静默安装时，不读取本地软件版本，只根据 GitHub 最新 Release tag 和 LastInstalledTag 判断是否安装过。
 - .msi 未填写静默参数时默认使用 /qn /norestart。
 - .exe 未填写静默参数时默认使用 /S；不同安装器参数可能不同，可在 apps.json 里配置 SilentInstallArgs。
 - 可在“资产筛选(可选)”列填写正则锁定安装包，例如 (?i)(setup|installer).*\.(exe|msi)$。
@@ -22,9 +25,25 @@
 注意：
 - 检查更新使用 GitHub Releases。
 - 会读取当前 Windows 系统架构，对 release 资产打分，尽量避免 x64 机器误选 ARM64/macOS/Linux 包。
+- “资产筛选(可选)”可留空，留空时自动按 Windows、x64/arm64/x86、安装包/压缩包等信息打分匹配。
+- Windows 64 位还要区分 x64 和 ARM64：win64 只表示 64 位 Windows，不等于一定适合 x64 电脑。
+- x64 电脑会优先选择 x64、x86_64、amd64，并排除 arm64、aarch64、armv8。
 - 覆盖 Program Files 目录通常需要管理员权限，程序已设置为管理员运行。
 - 下载加速使用 https://gh-proxy.org/。
 - 支持多线程分段下载，服务器不支持时自动回退单线程。
 - 可选调用本地 Internet Download Manager 下载；IDM 下载未产出文件时自动回退内置多线程下载。
 - 更新结束后自动清理下载文件和临时目录。
 - rar/7z 解压依赖 Windows 自带 tar.exe 或 7-Zip。
+
+资产筛选规则：
+- 资产筛选填的是正则表达式，只匹配 GitHub Release 里的资产文件名。
+- (?i) 表示不区分大小写。
+- 普通用户建议留空，让程序自动识别。
+- 只在自动选择不符合预期时手动填写。
+
+常用示例：
+- Windows x64 压缩包：(?i)(windows|win).*(x64|x86_64|amd64).*\.zip$
+- Windows ARM64 压缩包：(?i)(windows|win).*(arm64|aarch64).*\.zip$
+- 安装包 exe：(?i)(setup|installer).*\.exe$
+- exe 或 msi 安装包：(?i)\.(exe|msi)$
+- rar 压缩包：(?i)\.rar$
