@@ -109,7 +109,7 @@ namespace GitHubUniversalUpdater
 
         private void InitializeUi()
         {
-            Text = "GitHub 通用一键更新器 v1.1.3";
+            Text = "GitHub 通用一键更新器 v1.1.4";
             Width = 1545;
             Height = 720;
             StartPosition = FormStartPosition.CenterScreen;
@@ -148,7 +148,7 @@ namespace GitHubUniversalUpdater
 
             AddTextColumn("Name", "软件名称", 190);
             AddTextColumn("InstallDir", "安装目录或主程序exe", 310);
-            grid.Columns.Add(new DataGridViewButtonColumn { Name = "BrowseInstall", HeaderText = "", Text = "选择", UseColumnTextForButtonValue = true, Width = 62, Resizable = DataGridViewTriState.True });
+            grid.Columns.Add(new DataGridViewButtonColumn { Name = "BrowseInstall", HeaderText = "选择", Text = "选择", UseColumnTextForButtonValue = true, Width = 62, Resizable = DataGridViewTriState.True });
             AddTextColumn("GitHubUrl", "GitHub 地址", 300);
             AddTextColumn("LastInstalledTag", "本地版本", 105);
             AddTextColumn("LatestTag", "最新版本", 110);
