@@ -109,7 +109,7 @@ namespace GitHubUniversalUpdater
 
         private void InitializeUi()
         {
-            Text = "GitHub 通用一键更新器 v1.1.4";
+            Text = "GitHub 通用一键更新器 v1.1.5";
             Width = 1545;
             Height = 720;
             StartPosition = FormStartPosition.CenterScreen;
@@ -136,7 +136,8 @@ namespace GitHubUniversalUpdater
             grid = new DataGridView();
             grid.Dock = DockStyle.Fill;
             grid.AllowUserToAddRows = false;
-            grid.RowHeadersVisible = false;
+            grid.RowHeadersVisible = true;
+            grid.RowHeadersWidth = 34;
             grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
             grid.MultiSelect = true;
             grid.AllowUserToResizeColumns = true;
@@ -144,24 +145,20 @@ namespace GitHubUniversalUpdater
             grid.BackgroundColor = Color.FromArgb(170, 170, 170);
             grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
             grid.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.None;
-            grid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize;
+            grid.ColumnHeadersVisible = true;
+            grid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
+            grid.ColumnHeadersHeight = 26;
 
-            AddTextColumn("Name", "软件名称", 190);
-            AddTextColumn("InstallDir", "安装目录或主程序exe", 310);
-            grid.Columns.Add(new DataGridViewButtonColumn { Name = "BrowseInstall", HeaderText = "选择", Text = "选择", UseColumnTextForButtonValue = true, Width = 62, Resizable = DataGridViewTriState.True });
-            AddTextColumn("GitHubUrl", "GitHub 地址", 300);
-            AddTextColumn("LastInstalledTag", "本地版本", 105);
-            AddTextColumn("LatestTag", "最新版本", 110);
-            AddTextColumn("Status", "状态", 160);
-            AddTextColumn("PreferredAssetRegex", "资产筛选(可选)", 260);
-            var modeColumn = new DataGridViewComboBoxColumn();
-            modeColumn.Name = "UpdateMode";
-            modeColumn.HeaderText = "更新方式";
-            modeColumn.Width = 95;
-            modeColumn.Resizable = DataGridViewTriState.True;
-            modeColumn.Items.AddRange(ModeArchive, ModeInstaller);
-            grid.Columns.Add(modeColumn);
-            AddTextColumn("SilentInstallArgs", "静默参数", 150);
+            AddTextColumn("Name", "软件名称", 210);
+            AddTextColumn("InstallDir", "安装目录或主程序exe", 420);
+            grid.Columns.Add(new DataGridViewButtonColumn { Name = "BrowseInstall", HeaderText = "", Text = "选择", UseColumnTextForButtonValue = true, Width = 72, Resizable = DataGridViewTriState.True });
+            AddTextColumn("GitHubUrl", "GitHub 地址", 410);
+            AddTextColumn("LastInstalledTag", "本地版本", 120);
+            AddTextColumn("LatestTag", "最新版本", 120);
+            AddTextColumn("Status", "状态", 170);
+            AddTextColumn("PreferredAssetRegex", "资产筛选(可选)", 300);
+            AddHiddenTextColumn("UpdateMode", "更新方式");
+            AddHiddenTextColumn("SilentInstallArgs", "静默参数");
             Controls.Add(grid);
 
             logBox = new TextBox();
@@ -190,6 +187,12 @@ namespace GitHubUniversalUpdater
         private void AddTextColumn(string name, string header, int width)
         {
             grid.Columns.Add(new DataGridViewTextBoxColumn { Name = name, HeaderText = header, Width = width, Resizable = DataGridViewTriState.True });
+        }
+
+        private void AddHiddenTextColumn(string name, string header)
+        {
+            var column = new DataGridViewTextBoxColumn { Name = name, HeaderText = header, Visible = false, Resizable = DataGridViewTriState.True };
+            grid.Columns.Add(column);
         }
 
         private void LoadConfig()
@@ -436,7 +439,8 @@ namespace GitHubUniversalUpdater
                 checkedReleases[rowIndex] = release;
                 var local = DetectLocalVersion(app);
                 var status = IsNewer(local, release.Tag) ? "发现更新" : "已是最新";
-                if (IsInstallerMode(app))
+                var asset = SelectAsset(release, app.PreferredAssetRegex, IsInstallerMode(app));
+                if (IsInstallerMode(app) || IsInstallerAsset(asset.Name))
                     status += "（安装包）";
                 SetStatus(rowIndex, local, release.Tag, status);
             }
@@ -466,10 +470,11 @@ namespace GitHubUniversalUpdater
                 }
 
                 var asset = SelectAsset(release, app.PreferredAssetRegex, IsInstallerMode(app));
+                var installAsInstaller = IsInstallerMode(app) || IsInstallerAsset(asset.Name);
                 Log(app.Name + " 选择资产：" + asset.Name);
                 var assetPath = DownloadAsset(app, release, asset, rowIndex);
 
-                if (IsInstallerMode(app))
+                if (installAsInstaller)
                 {
                     SetStatus(rowIndex, local, release.Tag, "静默安装中...");
                     InstallSilently(app, assetPath);
@@ -607,18 +612,23 @@ namespace GitHubUniversalUpdater
             }
             var allowed = installerMode
                 ? new[] { ".exe", ".msi", ".msix", ".msixbundle" }
-                : new[] { ".zip", ".7z", ".rar" };
+                : new[] { ".zip", ".7z", ".rar", ".exe", ".msi", ".msix", ".msixbundle" };
             var filtered = assets.Where(a => allowed.Contains(Path.GetExtension(a.Name).ToLowerInvariant())).ToList();
             if (filtered.Count == 0)
                 filtered = assets.ToList();
             if (filtered.Count == 0)
                 throw new InvalidOperationException("Release 没有找到可用下载资产");
-            var best = filtered.Select(a => new { Asset = a, Score = ScoreAsset(a.Name, installerMode) })
+            var best = filtered.Select(a => new { Asset = a, Score = ScoreAsset(a.Name, installerMode || IsInstallerAsset(a.Name)) })
                 .OrderByDescending(x => x.Score)
                 .ThenBy(x => x.Asset.Name.Length)
                 .First();
             Log("系统识别：windows " + GetCurrentArch() + "；自动选择资产：" + best.Asset.Name + "；评分 " + best.Score);
             return best.Asset;
+        }
+
+        private bool IsInstallerAsset(string fileName)
+        {
+            return Regex.IsMatch(fileName ?? "", @"(?i)\.(exe|msi|msix|msixbundle)$");
         }
 
         private int ScoreAsset(string fileName, bool installerMode)

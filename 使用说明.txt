@@ -3,9 +3,8 @@
 2. 首次运行会自动生成 apps.json 配置文件。
 3. 在软件里填写或修改：软件名称、安装目录或主程序 exe 路径、GitHub 地址。
 4. 可以点击每行“选择”按钮，手动选择安装目录或主程序 exe。
-5. “更新方式”默认选择“解压覆盖”；如果 GitHub Release 提供的是安装包，选择“静默安装”。
-6. 静默安装模式可填写“静默参数”，例如 /S、/silent、/verysilent、/qn /norestart。
-7. 点击“检查更新”，确认有更新后点击“一键更新”。
+5. GitHub Release 提供压缩包时自动解压覆盖；提供安装包时自动识别并后台静默安装。
+6. 点击“检查更新”，确认有更新后点击“一键更新”。
 
 带到其它电脑：
 - 只需要这个文件夹里的 GitHubUniversalUpdater.exe。
@@ -13,11 +12,11 @@
 - apps.example.json 是示例配置。
 - apps.json 会在首次运行时自动生成；如果你想带走已配置好的软件列表，也把 apps.json 一起复制过去。
 
-静默安装模式：
+安装包静默安装：
 - 适合 GitHub Release 里发布 setup.exe、installer.exe、.msi 这类安装包的软件。
-- 该模式不读取本地软件版本，只根据 GitHub 最新 Release tag 和 LastInstalledTag 判断是否安装过。
+- 识别到安装包后，不读取本地软件版本，只根据 GitHub 最新 Release tag 和 LastInstalledTag 判断是否安装过。
 - .msi 未填写静默参数时默认使用 /qn /norestart。
-- .exe 未填写静默参数时默认使用 /S；不同安装器参数可能不同，建议按软件官方说明填写。
+- .exe 未填写静默参数时默认使用 /S；不同安装器参数可能不同，可在 apps.json 里配置 SilentInstallArgs。
 - 可在“资产筛选(可选)”列填写正则锁定安装包，例如 (?i)(setup|installer).*\.(exe|msi)$。
 
 注意：
