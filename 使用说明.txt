@@ -2,9 +2,10 @@
 1. 双击 GitHubUniversalUpdater.exe 运行。
 2. 首次运行会自动生成 apps.json 配置文件。
 3. 在软件里填写或修改：软件名称、安装目录或主程序 exe 路径、GitHub 地址。
-4. “更新方式”默认选择“解压覆盖”；如果 GitHub Release 提供的是安装包，选择“静默安装”。
-5. 静默安装模式可填写“静默参数”，例如 /S、/silent、/verysilent、/qn /norestart。
-6. 点击“检查更新”，确认有更新后点击“一键更新”。
+4. 可以点击每行“选择”按钮，手动选择安装目录或主程序 exe。
+5. “更新方式”默认选择“解压覆盖”；如果 GitHub Release 提供的是安装包，选择“静默安装”。
+6. 静默安装模式可填写“静默参数”，例如 /S、/silent、/verysilent、/qn /norestart。
+7. 点击“检查更新”，确认有更新后点击“一键更新”。
 
 带到其它电脑：
 - 只需要这个文件夹里的 GitHubUniversalUpdater.exe。

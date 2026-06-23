@@ -7,6 +7,8 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Net;
+using System.Reflection;
+using System.Runtime.Serialization.Json;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -91,7 +93,12 @@ namespace GitHubUniversalUpdater
 
         public MainForm()
         {
-            baseDir = AppDomain.CurrentDomain.BaseDirectory;
+            var currentAssembly = typeof(MainForm).Assembly;
+            var entryAssembly = Assembly.GetEntryAssembly();
+            var assembly = entryAssembly != null && entryAssembly.GetName().Name == currentAssembly.GetName().Name
+                ? entryAssembly
+                : currentAssembly;
+            baseDir = Path.GetDirectoryName(assembly.Location);
             configPath = Path.Combine(baseDir, "apps.json");
             workDir = Path.Combine(baseDir, ".work");
             logPath = Path.Combine(baseDir, "update.log");
@@ -102,11 +109,11 @@ namespace GitHubUniversalUpdater
 
         private void InitializeUi()
         {
-            Text = "GitHub 通用一键更新器 v1.1.1";
-            Width = 1180;
+            Text = "GitHub 通用一键更新器 v1.1.2";
+            Width = 1545;
             Height = 720;
             StartPosition = FormStartPosition.CenterScreen;
-            MinimumSize = new Size(980, 580);
+            MinimumSize = new Size(1180, 580);
 
             var top = new FlowLayoutPanel();
             top.Dock = DockStyle.Top;
@@ -118,11 +125,12 @@ namespace GitHubUniversalUpdater
             checkButton = MakeButton("检查更新");
             updateButton = MakeButton("一键更新");
             saveButton = MakeButton("保存配置");
-            useIdmCheckBox = new CheckBox { Text = "使用 IDM", AutoSize = true, Margin = new Padding(14, 6, 4, 0) };
+            var proxyLabel = new Label { Text = "下载加速：https://gh-proxy.org/", AutoSize = true, Margin = new Padding(12, 6, 8, 0) };
+            useIdmCheckBox = new CheckBox { Text = "使用", AutoSize = true, Margin = new Padding(14, 6, 4, 0) };
             idmPathBox = new TextBox { Width = 260, Margin = new Padding(4, 3, 4, 0) };
-            browseIdmButton = MakeButton("选择 IDM");
+            browseIdmButton = MakeButton("选择IDM");
 
-            top.Controls.AddRange(new Control[] { addButton, removeButton, checkButton, updateButton, saveButton, useIdmCheckBox, idmPathBox, browseIdmButton });
+            top.Controls.AddRange(new Control[] { addButton, removeButton, saveButton, checkButton, updateButton, proxyLabel, useIdmCheckBox, idmPathBox, browseIdmButton });
             Controls.Add(top);
 
             grid = new DataGridView();
@@ -131,23 +139,25 @@ namespace GitHubUniversalUpdater
             grid.RowHeadersVisible = false;
             grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
             grid.MultiSelect = true;
+            grid.BackgroundColor = Color.FromArgb(170, 170, 170);
             grid.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.None;
             grid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize;
 
-            AddTextColumn("Name", "软件名称", 130);
-            AddTextColumn("InstallDir", "安装目录/主程序", 210);
-            AddTextColumn("GitHubUrl", "GitHub 仓库", 240);
-            AddTextColumn("LastInstalledTag", "已安装版本", 90);
-            AddTextColumn("PreferredAssetRegex", "资产筛选(可选)", 145);
+            AddTextColumn("Name", "软件名称", 190);
+            AddTextColumn("InstallDir", "安装目录或主程序exe", 310);
+            grid.Columns.Add(new DataGridViewButtonColumn { Name = "BrowseInstall", HeaderText = "", Text = "选择", UseColumnTextForButtonValue = true, Width = 62 });
+            AddTextColumn("GitHubUrl", "GitHub 地址", 300);
+            AddTextColumn("LastInstalledTag", "本地版本", 105);
+            AddTextColumn("LatestTag", "最新版本", 110);
+            AddTextColumn("Status", "状态", 160);
+            AddTextColumn("PreferredAssetRegex", "资产筛选(可选)", 180);
             var modeColumn = new DataGridViewComboBoxColumn();
             modeColumn.Name = "UpdateMode";
             modeColumn.HeaderText = "更新方式";
-            modeColumn.Width = 90;
+            modeColumn.Width = 95;
             modeColumn.Items.AddRange(ModeArchive, ModeInstaller);
             grid.Columns.Add(modeColumn);
-            AddTextColumn("SilentInstallArgs", "静默参数", 130);
-            AddTextColumn("LatestTag", "最新版本", 90);
-            AddTextColumn("Status", "状态", 145);
+            AddTextColumn("SilentInstallArgs", "静默参数", 150);
             Controls.Add(grid);
 
             logBox = new TextBox();
@@ -162,6 +172,7 @@ namespace GitHubUniversalUpdater
             removeButton.Click += delegate { RemoveSelectedRows(); };
             saveButton.Click += delegate { SaveConfig(); };
             browseIdmButton.Click += delegate { BrowseIdmPath(); };
+            grid.CellContentClick += Grid_CellContentClick;
             checkButton.Click += delegate { RunInBackground(RunCheck); };
             updateButton.Click += delegate { RunInBackground(RunUpdate); };
             FormClosing += delegate { SaveConfig(); };
@@ -184,7 +195,10 @@ namespace GitHubUniversalUpdater
             {
                 try
                 {
-                    config = new JavaScriptSerializer().Deserialize<AppConfig>(File.ReadAllText(configPath, Encoding.UTF8));
+                    using (var stream = File.OpenRead(configPath))
+                    {
+                        config = (AppConfig)new DataContractJsonSerializer(typeof(AppConfig)).ReadObject(stream);
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -222,7 +236,12 @@ namespace GitHubUniversalUpdater
                 UseIdm = useIdmCheckBox.Checked,
                 IdmPath = idmPathBox.Text.Trim()
             };
-            var json = new JavaScriptSerializer().Serialize(config);
+            string json;
+            using (var stream = new MemoryStream())
+            {
+                new DataContractJsonSerializer(typeof(AppConfig)).WriteObject(stream, config);
+                json = Encoding.UTF8.GetString(stream.ToArray());
+            }
             File.WriteAllText(configPath, PrettyJson(json), new UTF8Encoding(false));
             Log("配置已保存：" + configPath);
         }
@@ -286,13 +305,14 @@ namespace GitHubUniversalUpdater
             grid.Rows.Add(
                 app.Name ?? "",
                 app.InstallDir ?? "",
+                "选择",
                 app.GitHubUrl ?? "",
                 string.IsNullOrWhiteSpace(app.LastInstalledTag) ? "未安装" : app.LastInstalledTag,
+                "",
+                "未检查",
                 app.PreferredAssetRegex ?? "",
                 mode,
-                app.SilentInstallArgs ?? "",
-                "",
-                "");
+                app.SilentInstallArgs ?? "");
         }
 
         private void RemoveSelectedRows()
@@ -301,6 +321,64 @@ namespace GitHubUniversalUpdater
             {
                 if (!row.IsNewRow)
                     grid.Rows.Remove(row);
+            }
+        }
+
+        private void Grid_CellContentClick(object sender, DataGridViewCellEventArgs e)
+        {
+            if (e.RowIndex < 0) return;
+            if (grid.Columns[e.ColumnIndex].Name != "BrowseInstall") return;
+            BrowseInstallPath(e.RowIndex);
+        }
+
+        private void BrowseInstallPath(int rowIndex)
+        {
+            using (var chooser = new Form())
+            using (var fileButton = new Button())
+            using (var folderButton = new Button())
+            using (var cancelButton = new Button())
+            {
+                chooser.Text = "选择安装目录或主程序";
+                chooser.StartPosition = FormStartPosition.CenterParent;
+                chooser.FormBorderStyle = FormBorderStyle.FixedDialog;
+                chooser.MinimizeBox = false;
+                chooser.MaximizeBox = false;
+                chooser.ClientSize = new Size(360, 82);
+
+                folderButton.Text = "选择安装目录";
+                folderButton.SetBounds(16, 24, 105, 30);
+                fileButton.Text = "选择主程序exe";
+                fileButton.SetBounds(128, 24, 105, 30);
+                cancelButton.Text = "取消";
+                cancelButton.SetBounds(240, 24, 88, 30);
+
+                folderButton.DialogResult = DialogResult.Yes;
+                fileButton.DialogResult = DialogResult.OK;
+                cancelButton.DialogResult = DialogResult.Cancel;
+                chooser.Controls.AddRange(new Control[] { folderButton, fileButton, cancelButton });
+                chooser.AcceptButton = folderButton;
+                chooser.CancelButton = cancelButton;
+
+                var result = chooser.ShowDialog(this);
+                if (result == DialogResult.Yes)
+                {
+                    using (var dialog = new FolderBrowserDialog())
+                    {
+                        dialog.Description = "选择软件安装目录";
+                        if (dialog.ShowDialog(this) == DialogResult.OK)
+                            grid.Rows[rowIndex].Cells["InstallDir"].Value = dialog.SelectedPath;
+                    }
+                }
+                else if (result == DialogResult.OK)
+                {
+                    using (var dialog = new OpenFileDialog())
+                    {
+                        dialog.Filter = "可执行文件|*.exe|所有文件|*.*";
+                        dialog.Title = "选择主程序 exe";
+                        if (dialog.ShowDialog(this) == DialogResult.OK)
+                            grid.Rows[rowIndex].Cells["InstallDir"].Value = dialog.FileName;
+                    }
+                }
             }
         }
 
