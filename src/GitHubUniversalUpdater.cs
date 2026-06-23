@@ -80,9 +80,11 @@ namespace GitHubUniversalUpdater
         private readonly string workDir;
         private readonly string logPath;
         private readonly Dictionary<int, ReleaseInfo> checkedReleases = new Dictionary<int, ReleaseInfo>();
+        private readonly Dictionary<int, string> downloadedAssets = new Dictionary<int, string>();
 
         private DataGridView grid;
         private TextBox logBox;
+        private ContextMenuStrip rowMenu;
         private Button addButton;
         private Button removeButton;
         private Button checkButton;
@@ -190,9 +192,11 @@ namespace GitHubUniversalUpdater
             saveButton.Click += delegate { SaveConfig(); };
             browseIdmButton.Click += delegate { BrowseIdmPath(); };
             grid.CellContentClick += Grid_CellContentClick;
+            grid.CellMouseDown += Grid_CellMouseDown;
             checkButton.Click += delegate { RunInBackground(RunCheck); };
             updateButton.Click += delegate { RunInBackground(RunUpdate); };
             FormClosing += delegate { SaveConfig(); };
+            InitializeRowMenu();
         }
 
         private Button MakeButton(string text)
@@ -354,6 +358,23 @@ namespace GitHubUniversalUpdater
             BrowseInstallPath(e.RowIndex);
         }
 
+        private void InitializeRowMenu()
+        {
+            rowMenu = new ContextMenuStrip();
+            rowMenu.Items.Add("手动安装已下载文件", null, delegate { ManualInstallSelectedAsset(); });
+            rowMenu.Items.Add("打开下载文件位置", null, delegate { OpenSelectedAssetLocation(); });
+            rowMenu.Items.Add("清理该软件下载缓存", null, delegate { ClearSelectedAssetCache(); });
+        }
+
+        private void Grid_CellMouseDown(object sender, DataGridViewCellMouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Right || e.RowIndex < 0) return;
+            grid.ClearSelection();
+            grid.Rows[e.RowIndex].Selected = true;
+            grid.CurrentCell = grid.Rows[e.RowIndex].Cells[Math.Max(0, e.ColumnIndex)];
+            rowMenu.Show(Cursor.Position);
+        }
+
         private void BrowseInstallPath(int rowIndex)
         {
             using (var chooser = new Form())
@@ -491,6 +512,7 @@ namespace GitHubUniversalUpdater
                 var installAsInstaller = ShouldInstallAsInstaller(mode, asset);
                 Log(app.Name + " 选择资产：" + asset.Name);
                 var assetPath = DownloadAsset(app, release, asset, rowIndex);
+                downloadedAssets[rowIndex] = assetPath;
 
                 if (installAsInstaller)
                 {
@@ -515,7 +537,11 @@ namespace GitHubUniversalUpdater
             }
             catch (Exception ex)
             {
-                SetStatus(rowIndex, app.LastInstalledTag, "", "失败：" + ex.Message);
+                var cachedAsset = FindCachedAsset(rowIndex);
+                var suffix = !string.IsNullOrWhiteSpace(cachedAsset) && File.Exists(cachedAsset)
+                    ? "（已保留下载文件，右键可手动安装）"
+                    : "";
+                SetStatus(rowIndex, app.LastInstalledTag, "", "失败：" + ex.Message + suffix);
                 Log(app.Name + " 更新失败：" + ex);
             }
         }
@@ -1148,6 +1174,96 @@ namespace GitHubUniversalUpdater
                 RunProcess("msiexec.exe", "/i \"" + installerPath + "\" " + args);
             else
                 RunProcess(installerPath, args);
+        }
+
+        private void ManualInstallSelectedAsset()
+        {
+            var rowIndex = GetSelectedRowIndex();
+            if (rowIndex < 0) return;
+            var assetPath = FindCachedAsset(rowIndex);
+            if (string.IsNullOrWhiteSpace(assetPath) || !File.Exists(assetPath))
+            {
+                MessageBox.Show(this, "没有找到已下载的安装文件。请先重新执行更新下载。", "手动安装", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            try
+            {
+                var ext = Path.GetExtension(assetPath).ToLowerInvariant();
+                if (ext == ".msi")
+                    Process.Start(new ProcessStartInfo("msiexec.exe", "/i \"" + assetPath + "\"") { UseShellExecute = true });
+                else
+                    Process.Start(new ProcessStartInfo(assetPath) { UseShellExecute = true });
+                SetStatus(rowIndex, "", "", "已打开手动安装界面");
+                Log("手动安装：" + assetPath);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "打开安装文件失败：" + ex.Message, "手动安装", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void OpenSelectedAssetLocation()
+        {
+            var rowIndex = GetSelectedRowIndex();
+            if (rowIndex < 0) return;
+            var assetPath = FindCachedAsset(rowIndex);
+            if (string.IsNullOrWhiteSpace(assetPath) || !File.Exists(assetPath))
+            {
+                MessageBox.Show(this, "没有找到已下载文件。", "打开文件位置", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            Process.Start(new ProcessStartInfo("explorer.exe", "/select,\"" + assetPath + "\"") { UseShellExecute = true });
+        }
+
+        private void ClearSelectedAssetCache()
+        {
+            var rowIndex = GetSelectedRowIndex();
+            if (rowIndex < 0) return;
+            var app = GetAppFromRow(grid.Rows[rowIndex]);
+            var dir = Path.Combine(workDir, SafePath(app.Name));
+            try
+            {
+                if (Directory.Exists(dir))
+                    Directory.Delete(dir, true);
+                downloadedAssets.Remove(rowIndex);
+                SetStatus(rowIndex, "", "", "已清理下载缓存");
+                Log(app.Name + " 已清理下载缓存：" + dir);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "清理缓存失败：" + ex.Message, "清理缓存", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private int GetSelectedRowIndex()
+        {
+            if (grid.SelectedRows.Count > 0)
+                return grid.SelectedRows[0].Index;
+            if (grid.CurrentCell != null)
+                return grid.CurrentCell.RowIndex;
+            return -1;
+        }
+
+        private string FindCachedAsset(int rowIndex)
+        {
+            string assetPath;
+            if (downloadedAssets.TryGetValue(rowIndex, out assetPath) && File.Exists(assetPath))
+                return assetPath;
+
+            if (rowIndex < 0 || rowIndex >= grid.Rows.Count) return "";
+            var app = GetAppFromRow(grid.Rows[rowIndex]);
+            var dir = Path.Combine(workDir, SafePath(app.Name));
+            if (!Directory.Exists(dir)) return "";
+
+            var files = Directory.GetFiles(dir, "*", SearchOption.AllDirectories)
+                .Where(p => !Path.GetFileName(p).StartsWith("_", StringComparison.OrdinalIgnoreCase))
+                .Where(p => Regex.IsMatch(Path.GetExtension(p), @"(?i)^\.(exe|msi|msix|msixbundle|zip|7z|rar)$"))
+                .OrderByDescending(p => File.GetLastWriteTime(p))
+                .ToList();
+            if (files.Count == 0) return "";
+            downloadedAssets[rowIndex] = files[0];
+            return files[0];
         }
 
         private string DefaultSilentArgs(string installerPath)
