@@ -771,12 +771,12 @@ namespace GitHubUniversalUpdater
         private string DetectLocalVersion(AppEntry app, ReleaseInfo release)
         {
             var root = GetInstallRoot(app.InstallDir);
-            var exeVersion = DetectExecutableVersion(app, root, release);
-            if (IsUsableSavedVersion(exeVersion))
-                return exeVersion;
             var marker = Path.Combine(root, ".github-universal-updater-version");
             if (File.Exists(marker))
                 return File.ReadAllText(marker, Encoding.UTF8).Trim();
+            var exeVersion = DetectExecutableVersion(app, root, release);
+            if (IsUsableSavedVersion(exeVersion))
+                return exeVersion;
             if (IsUsableSavedVersion(app.LastInstalledTag))
                 return app.LastInstalledTag;
             return "未安装";
