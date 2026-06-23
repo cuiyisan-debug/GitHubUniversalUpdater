@@ -109,7 +109,7 @@ namespace GitHubUniversalUpdater
 
         private void InitializeUi()
         {
-            Text = "GitHub 通用一键更新器 v1.1.2";
+            Text = "GitHub 通用一键更新器 v1.1.3";
             Width = 1545;
             Height = 720;
             StartPosition = FormStartPosition.CenterScreen;
@@ -120,8 +120,8 @@ namespace GitHubUniversalUpdater
             top.Height = 42;
             top.Padding = new Padding(8, 8, 8, 4);
 
-            addButton = MakeButton("添加");
-            removeButton = MakeButton("删除");
+            addButton = MakeButton("新增软件");
+            removeButton = MakeButton("删除选中");
             checkButton = MakeButton("检查更新");
             updateButton = MakeButton("一键更新");
             saveButton = MakeButton("保存配置");
@@ -139,22 +139,26 @@ namespace GitHubUniversalUpdater
             grid.RowHeadersVisible = false;
             grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
             grid.MultiSelect = true;
+            grid.AllowUserToResizeColumns = true;
+            grid.AllowUserToResizeRows = false;
             grid.BackgroundColor = Color.FromArgb(170, 170, 170);
+            grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
             grid.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.None;
             grid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize;
 
             AddTextColumn("Name", "软件名称", 190);
             AddTextColumn("InstallDir", "安装目录或主程序exe", 310);
-            grid.Columns.Add(new DataGridViewButtonColumn { Name = "BrowseInstall", HeaderText = "", Text = "选择", UseColumnTextForButtonValue = true, Width = 62 });
+            grid.Columns.Add(new DataGridViewButtonColumn { Name = "BrowseInstall", HeaderText = "", Text = "选择", UseColumnTextForButtonValue = true, Width = 62, Resizable = DataGridViewTriState.True });
             AddTextColumn("GitHubUrl", "GitHub 地址", 300);
             AddTextColumn("LastInstalledTag", "本地版本", 105);
             AddTextColumn("LatestTag", "最新版本", 110);
             AddTextColumn("Status", "状态", 160);
-            AddTextColumn("PreferredAssetRegex", "资产筛选(可选)", 180);
+            AddTextColumn("PreferredAssetRegex", "资产筛选(可选)", 260);
             var modeColumn = new DataGridViewComboBoxColumn();
             modeColumn.Name = "UpdateMode";
             modeColumn.HeaderText = "更新方式";
             modeColumn.Width = 95;
+            modeColumn.Resizable = DataGridViewTriState.True;
             modeColumn.Items.AddRange(ModeArchive, ModeInstaller);
             grid.Columns.Add(modeColumn);
             AddTextColumn("SilentInstallArgs", "静默参数", 150);
@@ -185,7 +189,7 @@ namespace GitHubUniversalUpdater
 
         private void AddTextColumn(string name, string header, int width)
         {
-            grid.Columns.Add(new DataGridViewTextBoxColumn { Name = name, HeaderText = header, Width = width });
+            grid.Columns.Add(new DataGridViewTextBoxColumn { Name = name, HeaderText = header, Width = width, Resizable = DataGridViewTriState.True });
         }
 
         private void LoadConfig()
